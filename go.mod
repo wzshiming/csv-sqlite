@@ -3,7 +3,7 @@ module github.com/wzshiming/csv-sqlite
 go 1.23.1
 
 require (
-	github.com/mattn/go-sqlite3 v1.14.23
+	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/spf13/cobra v1.8.1
 	modernc.org/sqlite v1.33.1
 )

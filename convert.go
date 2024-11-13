@@ -6,10 +6,35 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
+type CSVReader interface {
+	Read() (record []string, err error)
+}
+
+type CSVWriter interface {
+	Write(record []string) error
+}
+
 func CSV2DB(ctx context.Context, f io.Reader, output string, tableName string) error {
+	r := csv.NewReader(f)
+	return ToDB(ctx, r, output, tableName)
+}
+
+func DB2CSV(ctx context.Context, input string, output io.Writer, query string) error {
+	w := csv.NewWriter(output)
+	defer w.Flush()
+	return FromDB(ctx, input, w, query)
+}
+
+func ToDB(ctx context.Context, r CSVReader, output string, tableName string) error {
+	_, err := os.Stat(output)
+	if err == nil {
+		return fmt.Errorf("output file already exists: %s", output)
+	}
+
 	db, err := sql.Open(driverName, output)
 	if err != nil {
 		return fmt.Errorf("opening db: %w", err)
@@ -26,7 +51,6 @@ func CSV2DB(ctx context.Context, f io.Reader, output string, tableName string) e
 		return fmt.Errorf("running WAL: %w", err)
 	}
 
-	r := csv.NewReader(f)
 	header, err := r.Read()
 	if err != nil {
 		return fmt.Errorf("reading header row: %w", err)
@@ -80,7 +104,15 @@ func CSV2DB(ctx context.Context, f io.Reader, output string, tableName string) e
 	return nil
 }
 
-func DB2CSV(ctx context.Context, input string, output io.Writer, query string) error {
+func FromDB(ctx context.Context, input string, w CSVWriter, query string) error {
+	info, err := os.Stat(input)
+	if err != nil {
+		return fmt.Errorf("stat err: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("input %s is a directory", input)
+	}
+
 	db, err := sql.Open(driverName, input)
 	if err != nil {
 		return fmt.Errorf("opening db: %w", err)
@@ -97,13 +129,6 @@ func DB2CSV(ctx context.Context, input string, output io.Writer, query string) e
 		return fmt.Errorf("getting columns: %w", err)
 	}
 
-	w := csv.NewWriter(output)
-	err = w.Write(col)
-	if err != nil {
-		return fmt.Errorf("writing row: %w", err)
-	}
-	defer w.Flush()
-
 	tmp := make([]any, len(col))
 	for i := range tmp {
 		tmp[i] = new(string)
@@ -115,8 +140,18 @@ func DB2CSV(ctx context.Context, input string, output io.Writer, query string) e
 		if err != nil {
 			return fmt.Errorf("scanning row: %w", err)
 		}
-		for i := range tmp {
-			row[i] = *tmp[i].(*string)
+		for i, v := range tmp {
+			if v == nil {
+				continue
+			}
+			t, ok := v.(*string)
+			if !ok {
+				return fmt.Errorf("scanning row: unexpected type %T", v)
+			}
+			if t == nil {
+				continue
+			}
+			row[i] = *t
 		}
 
 		err = w.Write(row)
